@@ -1,3 +1,4 @@
 #!/bin/bash
 
-mvn exec:java -Dexec.mainClass="com.craftinginterpreters.lox.Lox"
+mvn -q exec:java \
+    -Dexec.mainClass="com.craftinginterpreters.lox.Lox" -Dexec.arguments="${@}"

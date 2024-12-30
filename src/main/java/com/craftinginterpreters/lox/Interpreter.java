@@ -42,6 +42,25 @@ class Interpreter implements
         return expr.value;
     }
 
+    @Override
+    public Object visitLogicalExpr(Expr.Logical expr) {
+        // Evaluate left hand of the logical expression
+        Object left = evaluate(expr.left);
+
+        if (expr.operator.type == TokenType.OR) {
+            // Short circuit if it is an OR and the left is truthy
+            if (isTruthy(left))
+                return left;
+        } else {
+            // Short circuit if it is an AND and the left is truthy
+            if (!isTruthy(left))
+                return left;
+        }
+
+        // Continue to evaluate the right hand of the logical expression
+        return evaluate(expr.right);
+    }
+
     /**
      * Interpret a unary value.
      *
@@ -168,6 +187,17 @@ class Interpreter implements
     }
 
     @Override
+    public Void visitIfStmt(Stmt.If stmt) {
+        if (isTruthy(evaluate(stmt.condition))) {
+            execute(stmt.thenBranch);
+        } else if (stmt.elseBranch != null) {
+            execute(stmt.elseBranch);
+        }
+
+        return null;
+    }
+
+    @Override
     public Void visitPrintStmt(Stmt.Print stmt) {
         Object value = evaluate(stmt.expression);
         System.out.println(stringify(value));
@@ -184,6 +214,15 @@ class Interpreter implements
         }
 
         environment.define(stmt.name.lexeme, value);
+        return null;
+    }
+
+    @Override
+    public Void visitWhileStmt(Stmt.While stmt) {
+        while (isTruthy(evaluate(stmt.condition))) {
+            execute(stmt.body);
+        }
+
         return null;
     }
 

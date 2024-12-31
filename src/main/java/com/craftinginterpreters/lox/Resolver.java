@@ -19,8 +19,22 @@ class Resolver implements Expr.Visitor<Void>, Stmt.Visitor<Void> {
         // Top-level code
         NONE,
         // Function definition
-        FUNCTION
+        FUNCTION,
+        // Initializer (constructor method on a class)
+        INITIALIZER,
+        // Method, which is a function defined on a class and bound to it's
+        // instances
+        METHOD,
     }
+
+    private enum ClassType {
+        // Top-level code
+        NONE,
+        // Class definition
+        CLASS,
+    }
+
+    private ClassType currentClass = ClassType.NONE;
 
     void resolve(List<Stmt> statements) {
         for (Stmt statement : statements) {
@@ -119,6 +133,34 @@ class Resolver implements Expr.Visitor<Void>, Stmt.Visitor<Void> {
     }
 
     @Override
+    public Void visitClassStmt(Stmt.Class stmt) {
+        // Store the previous value, since classes can be defined in classes
+        ClassType enclosingClass = currentClass;
+        // Set the new current class type
+        currentClass = ClassType.CLASS;
+
+        declare(stmt.name);
+        define(stmt.name);
+
+        // Create a new enclosing scope for this method definition
+        beginScope();
+        // Register "this" as a variable, to be used in class methods
+        scopes.peek().put("this", true);
+
+        for (Stmt.Function method : stmt.methods) {
+            FunctionType declaration = FunctionType.METHOD;
+            resolveFunction(method, declaration);
+        }
+
+        // Discard the scope with "this"
+        endScope();
+
+        // Restore previous value
+        currentClass = enclosingClass;
+        return null;
+    }
+
+    @Override
     public Void visitExpressionStmt(Stmt.Expression stmt) {
         // Resolve a single expression statement
         resolve(stmt.expression);
@@ -166,8 +208,16 @@ class Resolver implements Expr.Visitor<Void>, Stmt.Visitor<Void> {
         }
 
         // Resolve expression being returned, if present
-        if (stmt.value != null)
+        if (stmt.value != null) {
+            // Constructor/initializer methods always return this implictly,
+            // so any return with a value in one is an error
+            if (currentFunction == FunctionType.INITIALIZER) {
+                Lox.error(stmt.keyword,
+                        "Can't return a value from an initializer.");
+            }
+
             resolve(stmt.value);
+        }
 
         return null;
     }
@@ -225,6 +275,15 @@ class Resolver implements Expr.Visitor<Void>, Stmt.Visitor<Void> {
     }
 
     @Override
+    public Void visitGetExpr(Expr.Get expr) {
+        // Resolve the left side of a property access/get expression
+        // The right side (property dispatch) happens at runtime in the
+        // interpreter
+        resolve(expr.object);
+        return null;
+    }
+
+    @Override
     public Void visitGroupingExpr(Expr.Grouping expr) {
         // Resolve expression inside the parenthesis
         resolve(expr.expression);
@@ -242,6 +301,26 @@ class Resolver implements Expr.Visitor<Void>, Stmt.Visitor<Void> {
         // Resolve both sides of the logical expression, with no short circuit
         resolve(expr.left);
         resolve(expr.right);
+        return null;
+    }
+
+    @Override
+    public Void visitSetExpr(Expr.Set expr) {
+        resolve(expr.value);
+        resolve(expr.object);
+        return null;
+    }
+
+    @Override
+    public Void visitThisExpr(Expr.This expr) {
+        if (currentClass == ClassType.NONE) {
+            // this keyword used outside of class scope, error
+            Lox.error(expr.keyword,
+                    "Can't use 'this' outside of a class.");
+            return null;
+        }
+
+        resolveLocal(expr, expr.keyword);
         return null;
     }
 

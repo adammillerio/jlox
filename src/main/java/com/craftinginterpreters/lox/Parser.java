@@ -61,9 +61,13 @@ class Parser {
         return assignment();
     }
 
-    // declaration → varDecl | statement ;
+    // declaration → funDecl | varDecl | statement ;
     private Stmt declaration() {
         try {
+            // funDecl → "fun" function ;
+            if (match(FUN))
+                return function("function");
+
             if (match(VAR))
                 return varDeclaration();
 
@@ -83,6 +87,8 @@ class Parser {
             return ifStatement();
         if (match(PRINT))
             return printStatement();
+        if (match(RETURN))
+            return returnStatement();
         if (match(WHILE))
             return whileStatement();
         if (match(LEFT_BRACE))
@@ -214,12 +220,61 @@ class Parser {
         return new Stmt.Print(value);
     }
 
+    private Stmt returnStatement() {
+        Token keyword = previous();
+
+        // return;
+        Expr value = null;
+        if (!check(SEMICOLON)) {
+            // If the next token is not the semicolon, parse the expression being
+            // returned ie:
+            // return 1;
+            value = expression();
+        }
+
+        consume(SEMICOLON, "Expect ';' after return value.");
+        return new Stmt.Return(keyword, value);
+    }
+
     private Stmt expressionStatement() {
         Expr expr = expression();
 
         consume(SEMICOLON, "Expect ';' after expression.");
 
         return new Stmt.Expression(expr);
+    }
+
+    // function → IDENTIFIER "(" parameters? ")" block ;
+    private Stmt.Function function(String kind) {
+        // fun add(a, b, c) { print a + b + c; }
+        // Parse the name of the function
+        // name = add
+        Token name = consume(IDENTIFIER, "Expect " + kind + " name.");
+
+        consume(LEFT_PAREN, "Expect '(' after " + kind + " name.");
+
+        // Parse all function parameters, up to 255
+        // parameters = ["a", "b", "c"]
+        // This includes the zero-parameter case
+        List<Token> parameters = new ArrayList<>();
+        if (!check(RIGHT_PAREN)) {
+            do {
+                if (parameters.size() >= 255) {
+                    error(peek(), "Can't have more than 255 parameters.");
+                }
+
+                parameters.add(consume(IDENTIFIER, "Expect parameter name."));
+            } while (match(COMMA));
+        }
+
+        consume(RIGHT_PAREN, "Expect ')' after parameters.");
+
+        // Parse the function body block
+        // body = [<print statement>]
+        consume(LEFT_BRACE, "Expect '{' before " + kind + " body.");
+        List<Stmt> body = block();
+
+        return new Stmt.Function(name, parameters, body);
     }
 
     private List<Stmt> block() {
@@ -361,7 +416,7 @@ class Parser {
     }
 
     // unary → ( "!" | "-" ) unary
-    // | primary ;
+    // | call ;
     private Expr unary() {
         // ( "!" | "-" ) unary
         if (match(BANG, MINUS)) {
@@ -373,8 +428,47 @@ class Parser {
             return new Expr.Unary(operator, right);
         }
 
-        // Nothing of lower precedence matched, so this is a primary expression
-        return primary();
+        // Nothing of lower precedence matched, check if this is a function call
+        return call();
+    }
+
+    // arguments → expression ( "," expression )* ;
+    // Technically the zero argument case in the call grammar is also here
+    private Expr finishCall(Expr callee) {
+        // Continue parsing comma separated call arguments until the right paren
+        // matching the left which generated this call is found
+        List<Expr> arguments = new ArrayList<>();
+        if (!check(RIGHT_PAREN)) {
+            do {
+                if (arguments.size() >= 255) {
+                    error(peek(), "Can't have more than 255 arguments.");
+                }
+
+                arguments.add(expression());
+            } while (match(COMMA));
+        }
+
+        Token paren = consume(RIGHT_PAREN, "Expect ')' after arguments.");
+
+        // Return call expression with parsed arguments added to the callee
+        return new Expr.Call(callee, paren, arguments);
+    }
+
+    // call → primary ( "(" arguments? ")" )* ;
+    private Expr call() {
+        // Parse the "left operand" of the function call (a primary expression)
+        Expr expr = primary();
+
+        // Continue consuming calls as long as there are left parens
+        while (true) {
+            if (match(LEFT_PAREN)) {
+                expr = finishCall(expr);
+            } else {
+                break;
+            }
+        }
+
+        return expr;
     }
 
     // primary → NUMBER | STRING | "true" | "false" | "nil"

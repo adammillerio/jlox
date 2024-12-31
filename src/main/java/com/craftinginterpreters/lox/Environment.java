@@ -57,4 +57,29 @@ class Environment {
     void define(String name, Object value) {
         values.put(name, value);
     }
+
+    Environment ancestor(int distance) {
+        // Start at the calling environment
+        Environment environment = this;
+
+        // Walk up the environments the provided distance
+        for (int i = 0; i < distance; i++) {
+            environment = environment.enclosing;
+        }
+
+        // Return the ancestor environment at this distance
+        return environment;
+    }
+
+    Object getAt(int distance, String name) {
+        // Resolve the ancestor environment at this distance and retrieve the
+        // value for this variable name
+        return ancestor(distance).values.get(name);
+    }
+
+    void assignAt(int distance, Token name, Object value) {
+        // Resolve the ancestor environment at this distance and assign the
+        // value to the variable declared there
+        ancestor(distance).values.put(name.lexeme, value);
+    }
 }

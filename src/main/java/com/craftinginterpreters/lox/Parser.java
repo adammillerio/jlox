@@ -61,9 +61,12 @@ class Parser {
         return assignment();
     }
 
-    // declaration → funDecl | varDecl | statement ;
+    // declaration → classDecl | funDecl | varDecl | statement ;
     private Stmt declaration() {
         try {
+            if (match(CLASS))
+                return classDeclaration();
+
             // funDecl → "fun" function ;
             if (match(FUN))
                 return function("function");
@@ -76,6 +79,24 @@ class Parser {
             synchronize();
             return null;
         }
+    }
+
+    // classDecl → "class" IDENTIFIER "{" function* "}" ;
+    private Stmt classDeclaration() {
+        // class Foo { add(a, b, c) { print a + b + c; } }
+        // name = "Foo"
+        Token name = consume(IDENTIFIER, "Expect class name.");
+        consume(LEFT_BRACE, "Expect '{' before class body.");
+
+        // Add all methods using function parser
+        List<Stmt.Function> methods = new ArrayList<>();
+        while (!check(RIGHT_BRACE) && !isAtEnd()) {
+            methods.add(function("method"));
+        }
+
+        consume(RIGHT_BRACE, "Expect '}' after class body.");
+
+        return new Stmt.Class(name, methods);
     }
 
     // statement → exprStatement | forStmt | ifStmt | printStmt
@@ -288,7 +309,8 @@ class Parser {
         return statements;
     }
 
-    // assignment → IDENTIFIER "=" assignment | logic_or ;
+    // assignment → ( call "." )? IDENTIFIER "=" assignment
+    // | logic_or ;
     private Expr assignment() {
         // IDENTIFIER (left hand side of the expr if an assignment)
         Expr expr = or();
@@ -301,10 +323,20 @@ class Parser {
             Expr value = assignment();
 
             if (expr instanceof Expr.Variable) {
+                // Left hand is a variable
+                // var foo = "bar"
                 // Ensure that the left hand side is a valid assignment
                 // target, then assign
                 Token name = ((Expr.Variable) expr).name;
                 return new Expr.Assign(name, value);
+            } else if (expr instanceof Expr.Get) {
+                // Left hand is one to many get expressions for property
+                // access
+                // var foo = Foo()
+                // foo.bar.baz = "bing"
+                // Transform this get expression into a set expression
+                Expr.Get get = (Expr.Get) expr;
+                return new Expr.Set(get.object, get.name, value);
             }
 
             error(equals, "Invalid assignment target.");
@@ -454,15 +486,21 @@ class Parser {
         return new Expr.Call(callee, paren, arguments);
     }
 
-    // call → primary ( "(" arguments? ")" )* ;
+    // call → primary ( "(" arguments? ")" | "." IDENTIFIER )* ;
     private Expr call() {
         // Parse the "left operand" of the function call (a primary expression)
         Expr expr = primary();
 
-        // Continue consuming calls as long as there are left parens
+        // Continue consuming calls as long as there are left parens or
+        // dots for property access
         while (true) {
             if (match(LEFT_PAREN)) {
+                // add(a, b, c)
                 expr = finishCall(expr);
+            } else if (match(DOT)) {
+                // foo.add(a, b, c)
+                Token name = consume(IDENTIFIER, "Expect property name after '.'.");
+                expr = new Expr.Get(expr, name);
             } else {
                 break;
             }
@@ -473,6 +511,7 @@ class Parser {
 
     // primary → NUMBER | STRING | "true" | "false" | "nil"
     // | "(" expression ")"
+    // | THIS
     // | IDENTIFIER ;
     private Expr primary() {
         // "false"
@@ -490,6 +529,12 @@ class Parser {
         if (match(NUMBER, STRING)) {
             return new Expr.Literal(previous().literal);
         }
+
+        // THIS
+        // "this" keyword, which identifies the instance currently being
+        // accessed during a method call on a class
+        if (match(THIS))
+            return new Expr.This(previous());
 
         // IDENTIFIER
         // Any single identifier token which is the name of a variable

@@ -92,6 +92,29 @@ class Interpreter implements
         return evaluate(expr.right);
     }
 
+    @Override
+    public Object visitSetExpr(Expr.Set expr) {
+        Object object = evaluate(expr.object);
+
+        if (!(object instanceof LoxInstance)) {
+            throw new RuntimeError(expr.name,
+                    "Only instances have fields.");
+        }
+
+        Object value = evaluate(expr.value);
+        ((LoxInstance) object).set(expr.name, value);
+
+        return value;
+    }
+
+    @Override
+    public Object visitThisExpr(Expr.This expr) {
+        // Look up the "this" variable which is automatically defined in an
+        // enclosing scope during the instance method call, see
+        // LoxFunction.bind for more info
+        return lookUpVariable(expr.keyword, expr);
+    }
+
     /**
      * Interpret a unary value.
      *
@@ -227,6 +250,26 @@ class Interpreter implements
     }
 
     @Override
+    public Void visitClassStmt(Stmt.Class stmt) {
+        environment.define(stmt.name.lexeme, null);
+
+        // Evaluate all methods on this class
+        Map<String, LoxFunction> methods = new HashMap<>();
+        for (Stmt.Function method : stmt.methods) {
+            // Conditionally set initializer flag since this is a method
+            // definition
+            LoxFunction function = new LoxFunction(
+                    method, environment, method.name.lexeme.equals("init"));
+            methods.put(method.name.lexeme, function);
+        }
+
+        LoxClass klass = new LoxClass(stmt.name.lexeme, methods);
+        environment.assign(stmt.name, klass);
+
+        return null;
+    }
+
+    @Override
     public Void visitExpressionStmt(Stmt.Expression stmt) {
         evaluate(stmt.expression);
 
@@ -237,7 +280,9 @@ class Interpreter implements
     @Override
     public Void visitFunctionStmt(Stmt.Function stmt) {
         // Store the Environment from function declaration time
-        LoxFunction function = new LoxFunction(stmt, environment);
+        // Set isInitializer to false since this is a function and not a
+        // class method declaration
+        LoxFunction function = new LoxFunction(stmt, environment, false);
 
         environment.define(stmt.name.lexeme, function);
 
@@ -406,6 +451,17 @@ class Interpreter implements
         }
 
         return function.call(this, arguments);
+    }
+
+    @Override
+    public Object visitGetExpr(Expr.Get expr) {
+        Object object = evaluate(expr.object);
+
+        if (object instanceof LoxInstance) {
+            return ((LoxInstance) object).get(expr.name);
+        }
+
+        throw new RuntimeError(expr.name, "Only instances have properties.");
     }
 
     /**

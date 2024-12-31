@@ -12,9 +12,30 @@ class LoxFunction implements LoxCallable {
     // count is a closure which encloses i by storing it in this Environment
     private final Environment closure;
 
-    LoxFunction(Stmt.Function declaration, Environment closure) {
+    // Flag indicating that this callable is a constructor method on a class
+    // This is a flag rather than just a check on the name of the method in
+    // order to avoid the edge case of defining a function named init()
+    private final boolean isInitializer;
+
+    LoxFunction(Stmt.Function declaration, Environment closure, boolean isInitializer) {
+        this.isInitializer = isInitializer;
         this.closure = closure;
         this.declaration = declaration;
+    }
+
+    // Create a bound method on a class, creating an enclosing scope and
+    // assigning a this keyword for instance access
+    LoxFunction bind(LoxInstance instance) {
+        // Create the enclosing scope for this "bound" instance method on a
+        // given class
+        Environment environment = new Environment(closure);
+
+        // Register "this" to correspond to the class instance which is
+        // invoking the method
+        environment.define("this", instance);
+
+        // Return the LoxFunction method "bound" to the current instance
+        return new LoxFunction(declaration, environment, isInitializer);
     }
 
     @Override
@@ -53,8 +74,23 @@ class LoxFunction implements LoxCallable {
             // the value to the calling scope, if any and end early
             // This is done with an exception in order to unwind any portions
             // of the stack inside the calling function (ifs/whiles/etc)
+
+            // Constructor/initializer with an empty return is valid, but
+            // should implicitly return "this"
+            if (isInitializer)
+                return closure.getAt(0, "this");
+
+            // Return the supplied value
             return returnValue.value;
         }
+
+        if (isInitializer)
+            // This is a constructor call, always return this
+            // This is allowed even in subsequent explicit calls to init in
+            // order to make the clox implementation simpler
+            // var foo = Foo()
+            // foo.init() <- Weird but valid, returns this
+            return closure.getAt(0, "this");
 
         // No return statement in this function, so return nil implicitly
         return null;

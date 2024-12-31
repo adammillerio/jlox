@@ -1,5 +1,6 @@
 package com.craftinginterpreters.lox;
 
+import java.util.ArrayList;
 import java.util.List;
 
 class Interpreter implements
@@ -9,7 +10,34 @@ class Interpreter implements
         // there is a separate “Void” type specifically for this use. Sort of a
         // “boxed void”, like “Integer” is for “int”.
         Stmt.Visitor<Void> {
-    private Environment environment = new Environment();
+
+    // "Root" environment to hold global variables and scope, this is replaced
+    // by the local environment when entering a new scope, so locally defined
+    // state will shadow global state
+    final Environment globals = new Environment();
+    private Environment environment = globals;
+
+    Interpreter() {
+        // Native function clock(), which returns the current system time in
+        // seconds as a double.
+        globals.define("clock", new LoxCallable() {
+            @Override
+            public int arity() {
+                return 0;
+            }
+
+            @Override
+            public Object call(Interpreter interpreter, List<Object> arguments) {
+                // Convert to seconds
+                return (double) System.currentTimeMillis() / 1000.0;
+            }
+
+            @Override
+            public String toString() {
+                return "<native fn>";
+            }
+        });
+    }
 
     /**
      * Interpret an expression and print the result to stdout.
@@ -187,6 +215,16 @@ class Interpreter implements
     }
 
     @Override
+    public Void visitFunctionStmt(Stmt.Function stmt) {
+        // Store the Environment from function declaration time
+        LoxFunction function = new LoxFunction(stmt, environment);
+
+        environment.define(stmt.name.lexeme, function);
+
+        return null;
+    }
+
+    @Override
     public Void visitIfStmt(Stmt.If stmt) {
         if (isTruthy(evaluate(stmt.condition))) {
             execute(stmt.thenBranch);
@@ -204,6 +242,18 @@ class Interpreter implements
 
         // Required when using the "boxed void" (Void) type
         return null;
+    }
+
+    @Override
+    public Void visitReturnStmt(Stmt.Return stmt) {
+        Object value = null;
+        if (stmt.value != null)
+            // Evaluate return statement's value if it has one
+            value = evaluate(stmt.value);
+
+        // Throw an exception with the return value to unwind the stack back to
+        // the call site of the function which is returning
+        throw new Return(value);
     }
 
     @Override
@@ -298,6 +348,39 @@ class Interpreter implements
             default:
                 return null;
         }
+    }
+
+    @Override
+    public Object visitCallExpr(Expr.Call expr) {
+        // Evaluate the expression which yields the callee
+        Object callee = evaluate(expr.callee);
+
+        // Evaluate all argument expressions and and add the results
+        List<Object> arguments = new ArrayList<>();
+        for (Expr argument : expr.arguments) {
+            arguments.add(evaluate(argument));
+        }
+
+        // Ensure the callee can be called (implements calling interface)
+        // "foobar"(); <- RuntimeError, since String does not implement LoxCallable
+        if (!(callee instanceof LoxCallable)) {
+            throw new RuntimeError(expr.paren, "Can only call functions and classes.");
+        }
+
+        // Cast to a LoxCallable and call it, returning the result
+        LoxCallable function = (LoxCallable) callee;
+
+        // Check the arity of the function and fail if number of args do not match
+        // fun add(a, b, c) { print a + b + c; }
+        // arity = 3
+        // add(1, 2, 3, 4); <- RuntimeError
+        // add(1, 2) <- RuntimeError
+        if (arguments.size() != function.arity()) {
+            throw new RuntimeError(expr.paren,
+                    "Expected " + function.arity() + " arguments but got " + arguments.size() + ".");
+        }
+
+        return function.call(this, arguments);
     }
 
     /**

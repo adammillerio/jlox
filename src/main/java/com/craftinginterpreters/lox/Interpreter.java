@@ -108,6 +108,37 @@ class Interpreter implements
     }
 
     @Override
+    public Object visitSuperExpr(Expr.Super expr) {
+        // Look up the "super" variable which is automatically defined in an
+        // enclosing scope during the instance method call if a class has a
+        // superclass. See LoxClass.findMethod for more info
+        int distance = locals.get(expr);
+
+        // Retrieve "super" as the class which is the direct superclass of the
+        // class which contains this super keyword (not necessarily the same as
+        // the class referred to by the "this" instance)
+        LoxClass superclass = (LoxClass) environment.getAt(distance, "super");
+
+        // Retrieve "this" as the class instance which is invoking this method,
+        // which is always in the environment immediately below the one
+        // containing super
+        LoxInstance object = (LoxInstance) environment.getAt(
+                distance - 1, "this");
+
+        // Find the method on the retrieved superclass and return a function
+        // which is bound to the retrieved "this" class instance
+        LoxFunction method = superclass.findMethod(expr.method.lexeme);
+
+        // Superclass doesn't have this method
+        if (method == null) {
+            throw new RuntimeError(expr.method,
+                    "Undefined property '" + expr.method.lexeme + "'.");
+        }
+
+        return method.bind(object);
+    }
+
+    @Override
     public Object visitThisExpr(Expr.This expr) {
         // Look up the "this" variable which is automatically defined in an
         // enclosing scope during the instance method call, see
@@ -251,7 +282,23 @@ class Interpreter implements
 
     @Override
     public Void visitClassStmt(Stmt.Class stmt) {
+        // Ensure the superclass is actually a class, if supplied
+        Object superclass = null;
+        if (stmt.superclass != null) {
+            superclass = evaluate(stmt.superclass);
+            if (!(superclass instanceof LoxClass)) {
+                throw new RuntimeError(stmt.superclass.name,
+                        "Superclass must be a class.");
+            }
+        }
+
         environment.define(stmt.name.lexeme, null);
+
+        // Create the environment holding "super" and set it to the superclass
+        if (stmt.superclass != null) {
+            environment = new Environment(environment);
+            environment.define("super", superclass);
+        }
 
         // Evaluate all methods on this class
         Map<String, LoxFunction> methods = new HashMap<>();
@@ -263,7 +310,14 @@ class Interpreter implements
             methods.put(method.name.lexeme, function);
         }
 
-        LoxClass klass = new LoxClass(stmt.name.lexeme, methods);
+        LoxClass klass = new LoxClass(stmt.name.lexeme,
+                (LoxClass) superclass, methods);
+
+        if (superclass != null) {
+            // Restore the enclosing environment if there is superclass
+            environment = environment.enclosing;
+        }
+
         environment.assign(stmt.name, klass);
 
         return null;

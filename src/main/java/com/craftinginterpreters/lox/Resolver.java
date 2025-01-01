@@ -32,6 +32,8 @@ class Resolver implements Expr.Visitor<Void>, Stmt.Visitor<Void> {
         NONE,
         // Class definition
         CLASS,
+        // Subclass definition
+        SUBCLASS,
     }
 
     private ClassType currentClass = ClassType.NONE;
@@ -142,6 +144,26 @@ class Resolver implements Expr.Visitor<Void>, Stmt.Visitor<Void> {
         declare(stmt.name);
         define(stmt.name);
 
+        // class Foo < Foo {} <- Error
+        if (stmt.superclass != null &&
+                stmt.name.lexeme.equals(stmt.superclass.name.lexeme)) {
+            Lox.error(stmt.superclass.name, "A class can't inherit from itself.");
+        }
+
+        // Resolve the superclass variable if there is one
+        if (stmt.superclass != null) {
+            // Now resolving a subclass
+            currentClass = ClassType.SUBCLASS;
+            resolve(stmt.superclass);
+        }
+
+        // Create a new scope and place the "super" variable in it, so that
+        // it will be available in the subclass
+        if (stmt.superclass != null) {
+            beginScope();
+            scopes.peek().put("super", true);
+        }
+
         // Create a new enclosing scope for this method definition
         beginScope();
         // Register "this" as a variable, to be used in class methods
@@ -154,6 +176,10 @@ class Resolver implements Expr.Visitor<Void>, Stmt.Visitor<Void> {
 
         // Discard the scope with "this"
         endScope();
+
+        // Discard the scope with "super" if there is a superclass
+        if (stmt.superclass != null)
+            endScope();
 
         // Restore previous value
         currentClass = enclosingClass;
@@ -308,6 +334,22 @@ class Resolver implements Expr.Visitor<Void>, Stmt.Visitor<Void> {
     public Void visitSetExpr(Expr.Set expr) {
         resolve(expr.value);
         resolve(expr.object);
+        return null;
+    }
+
+    @Override
+    public Void visitSuperExpr(Expr.Super expr) {
+        if (currentClass == ClassType.NONE) {
+            // super.NotInClass() <- Error
+            Lox.error(expr.keyword,
+                    "Can't use 'super' outside of a class.");
+        } else if (currentClass != ClassType.SUBCLASS) {
+            // class Foo { method() { print super.method() } } <- Error
+            Lox.error(expr.keyword,
+                    "Can't use 'super' in a class with no superclass.");
+        }
+
+        resolveLocal(expr, expr.keyword);
         return null;
     }
 

@@ -81,11 +81,20 @@ class Parser {
         }
     }
 
-    // classDecl → "class" IDENTIFIER "{" function* "}" ;
+    // classDecl → "class" IDENTIFIER ( "<" IDENTIFIER )? "{" function* "}" ;
     private Stmt classDeclaration() {
-        // class Foo { add(a, b, c) { print a + b + c; } }
+        // class Foo < Bar { add(a, b, c) { print a + b + c; } }
         // name = "Foo"
         Token name = consume(IDENTIFIER, "Expect class name.");
+
+        // Get superclass if any
+        // superclass = Bar
+        Expr.Variable superclass = null;
+        if (match(LESS)) {
+            consume(IDENTIFIER, "Expect superclass name.");
+            superclass = new Expr.Variable(previous());
+        }
+
         consume(LEFT_BRACE, "Expect '{' before class body.");
 
         // Add all methods using function parser
@@ -96,7 +105,7 @@ class Parser {
 
         consume(RIGHT_BRACE, "Expect '}' after class body.");
 
-        return new Stmt.Class(name, methods);
+        return new Stmt.Class(name, superclass, methods);
     }
 
     // statement → exprStatement | forStmt | ifStmt | printStmt
@@ -509,10 +518,9 @@ class Parser {
         return expr;
     }
 
-    // primary → NUMBER | STRING | "true" | "false" | "nil"
+    // primary → NUMBER | STRING | IDENTIFIER | "true" | "false" | "nil" | "this"
     // | "(" expression ")"
-    // | THIS
-    // | IDENTIFIER ;
+    // | "super" "." IDENTIFIER ;
     private Expr primary() {
         // "false"
         if (match(FALSE))
@@ -528,6 +536,20 @@ class Parser {
         // e.g. 5 or "five"
         if (match(NUMBER, STRING)) {
             return new Expr.Literal(previous().literal);
+        }
+
+        // "super" "." IDENTIFIER ;
+        // "super" keyword, which identifies the direct superclass of the class
+        // that it is being accessed in, and must be a method access
+        // super.add()
+        if (match(SUPER)) {
+            Token keyword = previous();
+            consume(DOT, "Expect '.' after 'super'.");
+            // return super; <- Error, can't have bare super
+            Token method = consume(IDENTIFIER,
+                    "Expect superclass method name.");
+
+            return new Expr.Super(keyword, method);
         }
 
         // THIS
